@@ -257,3 +257,66 @@ readinessProbe:
 | **Use Case**          | Temporary unavailability (e.g., during heavy load)      | Unrecoverable failures (e.g., deadlocks, app crashes)    |
 | **Impact on Lifecycle**| Does **not** restart the container                     | **Restarts** the container if the probe fails            |
 | **Running Period**    | Continues running during the app's lifecycle            | Continues running during the app's lifecycle             |
+
+## What will happen if the start up probe is failing repeatedly
+
+If the **Startup Probe** fails repeatedly in Kubernetes or OpenShift, the container will eventually be killed and restarted based on the **failureThreshold** configuration. The purpose of the **Startup Probe** is to ensure that the application has successfully started before the liveness or readiness probes are applied. It is particularly useful for applications that may take a long time to initialize.
+
+### Key Outcomes When the Startup Probe Fails Repeatedly:
+1. **Kubernetes/OpenShift will restart the container**:
+    - If the **Startup Probe** fails more than the specified `failureThreshold`, Kubernetes/OpenShift considers the container as failing to start properly.
+    - The container will be **killed** and **restarted** according to the container's restart policy.
+
+2. **Impact on Container Lifecycle**:
+    - Each time the **Startup Probe** fails and the container is restarted, the probe is **reset** (i.e., it starts the probing process from the beginning).
+    - If the application keeps failing the startup probe, the container will continue to **restart repeatedly**, which can lead to a **CrashLoopBackOff** state if the problem persists.
+
+3. **CrashLoopBackOff**:
+    - If the container repeatedly fails to start (i.e., fails the startup probe and is restarted multiple times), it may eventually enter the **CrashLoopBackOff** state.
+    - This state occurs when Kubernetes/OpenShift keeps restarting the container but it continues to fail.
+    - In this state, Kubernetes increases the time between each restart attempt using an exponential backoff (gradually increasing delay between restart attempts).
+
+4. **No Readiness or Liveness Probes During Startup**:
+    - While the **Startup Probe** is active and failing, **Readiness** and **Liveness** probes are **not run**.
+    - This prevents the container from being killed prematurely or being marked as unready until the startup probe determines that the application has successfully initialized.
+
+### Example Scenario:
+Imagine a Spring Boot application that takes a long time to start due to database initialization or complex startup logic. You configure a **Startup Probe** to check whether the application has successfully completed startup.
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 6
+```
+
+- The **Startup Probe** will start checking `/healthz` 5 seconds after the container starts, and it will run every 10 seconds.
+- If the application fails to respond with a successful status code 6 times in a row (i.e., after 60 seconds of probing), Kubernetes/OpenShift will consider the container as failed to start and will **restart it**.
+
+If the application keeps failing to start, the container will be restarted repeatedly, and if the failures persist, it may lead to a **CrashLoopBackOff** state.
+
+### How to Prevent Repeated Failures:
+1. **Ensure Proper Startup Configuration**:
+    - Ensure that the application has enough time to initialize properly by adjusting the `initialDelaySeconds`, `periodSeconds`, and `failureThreshold` settings to give the app sufficient time to start.
+
+2. **Investigate the Logs**:
+    - Check the application logs using:
+      ```bash
+      oc logs <pod-name> --previous
+      ```
+    - This will help identify why the application is failing to start.
+
+3. **Check Dependencies**:
+    - Ensure that any external services or dependencies (e.g., databases, APIs) are available and properly configured for the application to start successfully.
+
+### In summary:
+- If the **Startup Probe** fails repeatedly, Kubernetes/OpenShift will kill and restart the container.
+- Continuous failure can lead to a **CrashLoopBackOff** state, where the container is restarted with increasing delays.
+- Proper configuration of the startup probe and addressing underlying issues in the application or its environment can prevent repeated failures.
+
+The CrashLoopBackOff state occurs when a container fails to start repeatedly, and Kubernetes/OpenShift introduces exponential backoff to prevent constant rapid restarts.
+During this state, the container is not available, and the underlying issue must be addressed to stop the cycle of failures.
+Kubernetes/OpenShift will not delete the pod on its own; it will continue attempting restarts with increasing delays until the issue is resolved or the pod is manually deleted.
