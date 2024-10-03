@@ -38,7 +38,9 @@ In practice, each of these probes helps Kubernetes ensure the application is hea
 
 ## What happens if start up probes done with all the failureThreshold values and the container still not started?
 
-If the **Startup Probe** fails after reaching the defined `failureThreshold` and the container still has not started, Kubernetes/OpenShift will **consider the container unhealthy** and will take corrective actions based on the pod's restart policy. Here's what happens:
+If the **Startup Probe** fails after reaching the defined `failureThreshold` and the container still has not started,
+Kubernetes/OpenShift will **consider the container unhealthy**
+and will take corrective actions based on the pod's restart policy. Here's what happens:
 
 ### 1. **Container Restart**:
 - Once the **Startup Probe** reaches its maximum allowed failures (defined by `failureThreshold`), Kubernetes/OpenShift will **restart the container**.
@@ -320,3 +322,74 @@ If the application keeps failing to start, the container will be restarted repea
 The CrashLoopBackOff state occurs when a container fails to start repeatedly, and Kubernetes/OpenShift introduces exponential backoff to prevent constant rapid restarts.
 During this state, the container is not available, and the underlying issue must be addressed to stop the cycle of failures.
 Kubernetes/OpenShift will not delete the pod on its own; it will continue attempting restarts with increasing delays until the issue is resolved or the pod is manually deleted.
+
+## Restart policies
+
+In Kubernetes (and by extension, OpenShift), there are three main types of **restart policies** that dictate how pods behave when they encounter issues like a failing **startup probe**. These restart policies come into play based on the exit status of containers, and the **startup probe** is responsible for determining whether the application is able to start successfully within the specified conditions.
+
+### 1. **Always** (Default)
+- **Behavior**: If the startup probe fails, the pod’s container will be restarted **indefinitely**, regardless of the exit status (success or failure).
+- **Use Case**: This is the default policy for most pods. It is useful for services that are meant to run continuously, like web servers or long-running applications.
+- **In case of failure**:
+    - If the container fails the startup probe repeatedly, it will continue restarting indefinitely until the application either starts correctly or the pod enters a **CrashLoopBackOff** state (with increasing delays between restart attempts).
+    - **CrashLoopBackOff**: If failures continue, the pod will not be deleted, but the time between restarts will increase exponentially to avoid system overload.
+
+   ```yaml
+   spec:
+     restartPolicy: Always
+   ```
+
+### 2. **OnFailure**
+- **Behavior**: The pod’s container will be restarted **only if the container exits with a failure** (i.e., non-zero exit code).
+- **Use Case**: This policy is typically used for batch jobs or tasks that should only be restarted if they fail. It’s not typically used with long-running services like web servers.
+- **In case of startup probe failure**:
+    - If the startup probe fails, the container will be restarted because it didn’t start successfully (assuming a non-zero exit code).
+    - If the container exits successfully (exit code `0`), it won’t be restarted, even if the startup probe failed initially but the container eventually started.
+
+   ```yaml
+   spec:
+     restartPolicy: OnFailure
+   ```
+
+### 3. **Never**
+- **Behavior**: The container will **not be restarted** after it fails, regardless of whether the failure is due to a startup probe or some other issue.
+- **Use Case**: This is typically used for one-off jobs or containers that should only run once. It is not suitable for long-running applications or services that are expected to recover from failure.
+- **In case of startup probe failure**:
+    - If the startup probe fails, the container will not be restarted.
+    - The pod will enter a **Failed** state, and you will need to manually intervene (e.g., by deleting or restarting the pod) to resolve the issue.
+
+   ```yaml
+   spec:
+     restartPolicy: Never
+   ```
+
+### Detailed Behavior with **Startup Probes**:
+- **Startup Probe Failing**: The startup probe is designed to check whether an application has started correctly. If the probe fails consistently (within the defined `failureThreshold` and `periodSeconds`), the container is considered to have failed startup.
+- **Failure Handling**: When the startup probe fails, the pod will behave according to the set restart policy:
+    - **Always**: The container is restarted and continues retrying until it starts successfully or enters CrashLoopBackOff.
+    - **OnFailure**: The container is restarted only if it failed (non-zero exit code).
+    - **Never**: The container does not restart, and the pod is marked as Failed.
+
+### Key Parameters for Probes:
+- **initialDelaySeconds**: The time Kubernetes waits before starting the first probe.
+- **periodSeconds**: How often to perform the probe.
+- **failureThreshold**: How many times the probe can fail before Kubernetes considers the pod unhealthy.
+
+### Crash Scenarios with Startup Probe:
+1. **CrashLoopBackOff**:
+    - With the **Always** policy, if the startup probe keeps failing, the pod may enter a **CrashLoopBackOff** state, where Kubernetes will retry to restart the container but with exponentially increasing delays.
+
+2. **Pod Failure**:
+    - With the **Never** policy, repeated failure of the startup probe means the container will not be restarted after it fails, and the pod will enter a **Failed** state.
+
+3. **Controlled Restarts**:
+    - With **OnFailure**, the container will be restarted if the exit code is non-zero, but if the startup probe passes at some point, the container will continue running and will not be restarted again unless there’s another failure.
+
+### Summary of Restart Policies with Startup Probe Failure:
+| **Restart Policy** | **Behavior if Startup Probe Fails** | **Use Case** |
+| --- | --- | --- |
+| **Always** (default) | Continues restarting indefinitely until the container starts successfully or enters CrashLoopBackOff | Long-running services that must always be running |
+| **OnFailure** | Restarts the container only if it exits with a non-zero status code | Batch jobs or applications that should only restart if they fail |
+| **Never** | Container will not restart, and the pod enters a Failed state | One-off jobs that should not restart on failure |
+
+Each policy serves a different purpose and is suited for different types of workloads and deployment strategies, based on the expected behavior of your application.
