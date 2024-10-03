@@ -393,3 +393,123 @@ In Kubernetes (and by extension, OpenShift), there are three main types of **res
 | **Never** | Container will not restart, and the pod enters a Failed state | One-off jobs that should not restart on failure |
 
 Each policy serves a different purpose and is suited for different types of workloads and deployment strategies, based on the expected behavior of your application.
+
+## maxSurege = 1 and maxUnavailable = 0
+
+If **maxSurge** is set to **1** and **maxUnavailable** is set to **0** during a rolling update in Kubernetes or OpenShift, it means that Kubernetes will handle the deployment with a very conservative approach to avoid any downtime or reduction in service capacity. Here's what will happen:
+
+### Breakdown of the Settings:
+
+- **maxSurge: 1**:
+    - Kubernetes is allowed to create at most **1 extra pod** (above the desired replica count) during the rolling update. This means that at any given time, there will be at most 1 more pod than the desired number of replicas.
+
+- **maxUnavailable: 0**:
+    - No existing pods can be terminated or become unavailable until the new pod is created, passes its health checks (startup, readiness, etc.), and is fully ready. This setting ensures that there is always the full set of functioning pods available to serve traffic, meaning no reduction in capacity during the update.
+
+### What Happens During a Rolling Update with These Settings?
+
+1. **New Pod Creation**:
+    - Kubernetes will start by creating **1 additional pod** (due to `maxSurge: 1`).
+    - This new pod will go through the startup process, including passing any **startup probes** and **readiness probes**.
+    - If the new pod passes all health checks and becomes **ready**, it will be added to the pool of active pods.
+
+2. **No Pods Terminated Until New Pod is Ready**:
+    - Since `maxUnavailable` is set to **0**, Kubernetes will not terminate any of the old pods until the new pod is confirmed to be **fully ready**.
+    - This ensures that there is **no downtime** and that your application maintains 100% capacity during the deployment.
+
+3. **Rolling Process**:
+    - After the new pod becomes ready, Kubernetes will terminate **one of the old pods** and create another new pod to continue the rolling update process.
+    - This process continues one pod at a time (because of `maxSurge: 1`), with Kubernetes ensuring that:
+        - There is always **1 additional pod** temporarily (during new pod creation).
+        - No pod is terminated until its replacement is fully ready (because of `maxUnavailable: 0`).
+
+4. **Impact of Startup/Readiness Probe Failures**:
+    - If the new pod fails its **startup probe** or **readiness probe**, it will be restarted or marked as failed, and Kubernetes will **not terminate the old pod** until the new one becomes ready.
+    - If the new pod repeatedly fails, the old pod will continue to run, ensuring uninterrupted service, but the rolling update will be delayed or paused until the issue is resolved.
+
+### Example Scenario:
+
+- Suppose your deployment has 5 replicas.
+- Kubernetes will:
+    - Create **1 additional pod** (for a total of 6 pods) due to `maxSurge: 1`.
+    - Wait for the new pod to become ready.
+    - Once the new pod is ready, it will terminate **1 old pod**, ensuring that the total number of pods running at any given time is never less than 5 (because `maxUnavailable: 0`).
+
+- This process repeats, with Kubernetes ensuring that:
+    - There is no downtime during the update.
+    - The application always has **at least 5 active pods** serving traffic throughout the rolling update.
+
+### Key Takeaways:
+- **No Service Downtime**: Since `maxUnavailable` is 0, Kubernetes ensures there are always the full number of replicas serving traffic, meaning the application never drops below its required capacity during the update.
+- **Slow Deployment**: The deployment may be slower compared to other settings because Kubernetes can only replace one pod at a time, waiting for each new pod to become ready before terminating an old one.
+- **High Availability**: This configuration is useful when you want **high availability** during the update, especially in production environments where downtime or reduced capacity is unacceptable.
+
+### Summary:
+
+With **maxSurge: 1** and **maxUnavailable: 0**, the rolling update is performed one pod at a time,
+ensuring that at no point does the application lose capacity.
+Old pods are not terminated until their replacements are fully ready, 
+ensuring no service disruption during the update. If any new pod fails its startup or readiness checks,
+the update pauses until the issue is resolved.
+
+## maxSurge=1 and maxUnavailable=1
+
+If **maxSurge** is set to **1** and **maxUnavailable** is set to **1** in a Kubernetes or OpenShift **rolling update** strategy, the deployment will proceed with more flexibility compared to when `maxUnavailable` is set to 0. This combination allows for a faster rollout, but with a small risk of having fewer replicas temporarily available during the deployment.
+
+### Breakdown of the Settings:
+
+- **maxSurge: 1**:
+    - Kubernetes can create **1 additional pod** beyond the desired replica count during the rolling update. This temporarily increases the number of pods to expedite the update process.
+
+- **maxUnavailable: 1**:
+    - Kubernetes allows **1 old pod** to be unavailable (terminated or not ready) during the update. This means that during the update process, there could be **1 fewer pod** available than the desired number of replicas.
+
+### What Happens During a Rolling Update with These Settings?
+
+1. **New Pod Creation**:
+    - Kubernetes will create **1 additional pod** due to `maxSurge: 1`. This new pod will go through the startup process, including health checks like **startup probes** and **readiness probes**.
+    - The new pod must pass the health checks before it is considered ready to handle traffic.
+
+2. **Old Pod Termination**:
+    - Since `maxUnavailable: 1`, Kubernetes is allowed to terminate **1 old pod** **even if the new pod is not yet fully ready**. This means at any point during the rolling update, you could temporarily have **1 less pod available** than your desired replica count.
+
+    - However, the combination of `maxSurge: 1` and `maxUnavailable: 1` ensures that the total number of pods never falls below **1 less than the desired replica count**. For example, if you have 5 replicas, Kubernetes will ensure that at least 4 pods are available during the update.
+
+3. **Parallelism in the Update**:
+    - With `maxSurge: 1` and `maxUnavailable: 1`, Kubernetes can update multiple pods faster because it can:
+        - Add **1 extra new pod** (surging).
+        - Remove **1 old pod** at the same time (even before the new pod is ready).
+    - This increases the speed of the rolling update by allowing the system to operate with a temporarily reduced number of replicas.
+
+4. **Faster Deployment, With Slight Availability Risk**:
+    - By allowing **1 old pod** to be unavailable, the rolling update will progress faster compared to when `maxUnavailable` is set to 0. However, this comes at the cost of potentially reducing the number of available pods by 1 during the update.
+    - This might be acceptable in non-critical environments or where slight fluctuations in availability are tolerable.
+
+### Example Scenario:
+
+- Suppose your deployment has **5 replicas**.
+- With `maxSurge: 1` and `maxUnavailable: 1`, Kubernetes can:
+    - Create **1 new pod**, making a total of **6 pods temporarily** (the original 5 plus 1 surge pod).
+    - **Simultaneously terminate 1 old pod**, meaning that you might have only **4 available pods** until the new pod becomes ready.
+    - Once the new pod is ready, the process repeats until all the old pods are replaced.
+
+This speeds up the update because Kubernetes does not wait for a new pod to become fully ready before terminating an old pod.
+
+### Behavior in Case of Probe Failures:
+
+1. **New Pod Failing Startup or Readiness Probe**:
+    - If a new pod fails its **startup probe** or **readiness probe**, it will be restarted based on the restart policy.
+    - Since `maxUnavailable` is set to **1**, the system can tolerate 1 failed pod (either a new pod that hasn’t become ready or an old pod being terminated), but only **1 pod can be unavailable** at a time.
+
+2. **Impact of Multiple Failures**:
+    - If more than 1 pod fails (e.g., multiple new pods fail their health checks), the rolling update will pause because the `maxUnavailable: 1` limit has been reached. Kubernetes will wait until at least 1 pod becomes ready before proceeding with the update.
+    - This ensures that the number of available pods does not fall too low, but also prevents too many failures from causing a complete outage.
+
+### Summary of Key Points:
+
+- **maxSurge: 1**: Kubernetes can create 1 additional pod beyond the desired replica count to speed up the rolling update.
+- **maxUnavailable: 1**: Kubernetes allows 1 old pod to be unavailable at any time during the update, meaning that at any given moment, the total number of available pods could be reduced by 1.
+- **Faster Deployment**: This configuration allows for faster rolling updates since Kubernetes can remove an old pod before the new pod is fully ready, but it does introduce the possibility of reduced availability during the update.
+- **Slight Availability Risk**: If the application is sensitive to availability, this setting may cause temporary reductions in capacity. However, it ensures that the system never falls below the desired replica count minus 1, providing a good balance between speed and availability.
+
+This configuration is useful for environments where you want quicker updates but can tolerate having slightly fewer pods available during the update process.
