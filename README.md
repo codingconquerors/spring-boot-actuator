@@ -513,3 +513,46 @@ This speeds up the update because Kubernetes does not wait for a new pod to beco
 - **Slight Availability Risk**: If the application is sensitive to availability, this setting may cause temporary reductions in capacity. However, it ensures that the system never falls below the desired replica count minus 1, providing a good balance between speed and availability.
 
 This configuration is useful for environments where you want quicker updates but can tolerate having slightly fewer pods available during the update process.
+
+## Rolling update deployment
+A **rolling update** in Kubernetes (and OpenShift) primarily works at the level of the **ReplicaSet**, not directly on individual pods.
+
+Here’s how it works:
+
+### Rolling Update on ReplicaSets
+
+1. **Deployment Creates and Manages ReplicaSets**:
+    - When you create or update a **Deployment**, it manages the ReplicaSets for the application.
+    - During a rolling update, the Deployment creates a new **ReplicaSet** for the updated version of your application.
+
+2. **ReplicaSet Controls Pods**:
+    - The new ReplicaSet is responsible for creating new pods with the updated version of your application.
+    - Meanwhile, the old ReplicaSet (managing the previous version of the application) controls the existing pods.
+
+3. **Rolling Update Process**:
+    - **Gradual Replacement**:
+        - The **rolling update** works by gradually scaling up the new ReplicaSet (creating new pods) while scaling down the old ReplicaSet (terminating old pods).
+        - This happens according to the update strategy you set (e.g., `maxSurge` and `maxUnavailable`).
+
+    - **Pod Updates**:
+        - New pods are created by the new ReplicaSet, and once they become ready, the old pods (from the old ReplicaSet) are terminated.
+        - This ensures that the rolling update gradually replaces the old pods with new ones without downtime, provided the system can handle a temporary surge or reduction in capacity.
+
+4. **Final Outcome**:
+    - Once the rolling update completes, the **new ReplicaSet** will have all the desired replicas of the new version of your application.
+    - The old ReplicaSet will typically be scaled down to zero pods, but it remains in the cluster history for rollback purposes.
+
+### Why the Focus is on ReplicaSets, Not Pods Directly:
+
+- **Consistency**: Managing the update at the ReplicaSet level ensures that Kubernetes can easily keep track of which version of the application is running, and how many replicas of each version are present at any time.
+
+- **Rollback**: The old ReplicaSet remains in the cluster even after the rolling update completes, so if anything goes wrong, Kubernetes can quickly revert to the previous version by scaling the old ReplicaSet back up.
+
+- **Efficiency**: Kubernetes handles the rolling update process efficiently by dealing with entire sets of pods (via ReplicaSets), rather than managing individual pods directly. This approach makes the system more predictable and easier to control.
+
+### Summary:
+
+- **Rolling update** works by gradually transitioning from one **ReplicaSet** (old version) to another **ReplicaSet** (new version).
+- The **ReplicaSets** manage the lifecycle of the individual **pods**.
+- The rolling update process ensures that pods are updated incrementally, without causing service downtime, and enables easy rollback if needed.
+
